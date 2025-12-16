@@ -232,6 +232,12 @@ Query example:
 curl http://localhost:9200/cdc-events-*/_search?pretty
 ```
 
+## Screenshots
+
+![Screenshot 1](./screenshots/image.png)
+
+![Screenshot 2](./screenshots/image_2.png)
+
 ## Project Structure
 
 ```
@@ -337,7 +343,3 @@ For more detailed documentation, see the [docs](./docs/) folder:
 - [Setup Guide](./docs/SETUP.md) - Complete installation and configuration guide
 - [Monitoring Guide](./docs/MONITORING.md) - Using Grafana dashboards and queries
 - [Troubleshooting](./docs/TROUBLESHOOTING.md) - Common issues and solutions
-
-## License
-
-This project is for educational/assessment purposes.
