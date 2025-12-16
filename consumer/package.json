@@ -1,0 +1,19 @@
+{
+  "name": "cdc-consumer",
+  "version": "1.0.0",
+  "description": "Node.js consumer for TiDB CDC events via Kafka",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "prom-client": "^15.0.0",
+    "express": "^4.18.2",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

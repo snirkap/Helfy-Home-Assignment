@@ -1,0 +1,46 @@
+# Prometheus Configuration
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration (optional)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Rule files (optional)
+rule_files: []
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # CDC Consumer metrics
+  - job_name: 'cdc-consumer'
+    static_configs:
+      - targets: ['consumer:3000']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  # TiDB monitoring (optional)
+  - job_name: 'tidb'
+    static_configs:
+      - targets: ['tidb:10080']
+    metrics_path: /metrics
+
+  # TiKV monitoring (optional)
+  - job_name: 'tikv'
+    static_configs:
+      - targets: ['tikv:20180']
+    metrics_path: /metrics
+
+  # PD monitoring (optional)
+  - job_name: 'pd'
+    static_configs:
+      - targets: ['pd:2379']
+    metrics_path: /metrics

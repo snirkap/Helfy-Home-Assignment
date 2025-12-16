@@ -1,0 +1,35 @@
+# Grafana Datasources Configuration
+
+apiVersion: 1
+
+datasources:
+  # Prometheus datasource for metrics
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: 2.47.0
+
+  # Elasticsearch datasource for logs
+  - name: Elasticsearch
+    type: elasticsearch
+    uid: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    database: "cdc-events-*"
+    isDefault: false
+    editable: false
+    jsonData:
+      esVersion: "8.10.0"
+      includeFrozen: false
+      logLevelField: level
+      logMessageField: message
+      maxConcurrentShardRequests: 5
+      timeField: "@timestamp"

@@ -1,0 +1,360 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # TiDB Cluster Components
+  # ============================================
+
+  pd:
+    image: pingcap/pd:v6.5.0
+    container_name: pd
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - pd_data:/data
+    command:
+      - --name=pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd:2379
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380
+      - --data-dir=/data/pd
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:2379/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  tikv:
+    image: pingcap/tikv:v6.5.0
+    container_name: tikv
+    ports:
+      - "20160:20160"
+    volumes:
+      - tikv_data:/data
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --pd=pd:2379
+      - --data-dir=/data/tikv
+    depends_on:
+      pd:
+        condition: service_healthy
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:20180/status || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  tidb:
+    image: pingcap/tidb:v6.5.0
+    container_name: tidb
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+    command:
+      - --store=tikv
+      - --path=pd:2379
+      - --advertise-address=tidb
+    depends_on:
+      - tikv
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:10080/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  tidb-init:
+    build:
+      context: ./tidb-init
+      dockerfile: Dockerfile
+    container_name: tidb-init
+    depends_on:
+      tidb:
+        condition: service_healthy
+    environment:
+      - TIDB_HOST=tidb
+      - TIDB_PORT=4000
+      - TIDB_USER=root
+      - TIDB_PASSWORD=
+    networks:
+      - tidb-network
+    restart: "no"
+
+  # ============================================
+  # Kafka Components
+  # ============================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ============================================
+  # TiDB CDC Component
+  # ============================================
+
+  ticdc:
+    image: pingcap/ticdc:v6.5.0
+    container_name: ticdc
+    ports:
+      - "8300:8300"
+    command:
+      - /cdc
+      - server
+      - --addr=0.0.0.0:8300
+      - --advertise-addr=ticdc:8300
+      - --pd=http://pd:2379
+    depends_on:
+      tidb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8300/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  cdc-setup:
+    image: curlimages/curl:latest
+    container_name: cdc-setup
+    depends_on:
+      ticdc:
+        condition: service_healthy
+      tidb-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for TiCDC to be fully ready..."
+        sleep 10
+
+        echo "Creating CDC changefeed for database changes..."
+        curl -X POST http://ticdc:8300/api/v2/changefeeds \
+          -H "Content-Type: application/json" \
+          -d '{
+            "changefeed_id": "cdc-kafka-sink",
+            "sink_uri": "kafka://kafka:29092/cdc_events?protocol=canal-json&partition-num=1",
+            "replica_config": {
+              "sink": {
+                "dispatchers": [
+                  {
+                    "matcher": ["*.*"],
+                    "partition": "default"
+                  }
+                ]
+              }
+            }
+          }'
+
+        echo ""
+        echo "CDC changefeed created successfully!"
+
+        # Keep checking the changefeed status
+        sleep 5
+        curl -s http://ticdc:8300/api/v2/changefeeds | head -200
+    networks:
+      - tidb-network
+    restart: "no"
+
+  # ============================================
+  # Monitoring Stack
+  # ============================================
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus
+    user: root
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ============================================
+  # Logging Stack (ELK)
+  # ============================================
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.10.0
+    container_name: filebeat
+    user: root
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - consumer_logs:/var/log/consumer:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - tidb-network
+    command: filebeat -e -strict.perms=false
+
+  # ============================================
+  # Node.js Consumer Application
+  # ============================================
+
+  consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: consumer
+    ports:
+      - "3000:3000"
+    environment:
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_TOPIC=cdc_events
+      - KAFKA_GROUP_ID=cdc-consumer-group
+      - PROMETHEUS_PORT=3000
+      - LOG_FILE=/var/log/consumer/cdc-events.log
+    volumes:
+      - consumer_logs:/var/log/consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - tidb-network
+    restart: unless-stopped
+
+  # ============================================
+  # Grafana Dashboard
+  # ============================================
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: grafana
+    user: "0"
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - tidb-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+networks:
+  tidb-network:
+    driver: bridge
+
+volumes:
+  pd_data:
+  tikv_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+  prometheus_data:
+  elasticsearch_data:
+  grafana_data:
+  consumer_logs:

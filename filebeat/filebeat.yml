@@ -1,0 +1,53 @@
+# Filebeat Configuration
+# Collects CDC events from consumer logs and sends to Elasticsearch
+
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/consumer/cdc-events.log
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.message_key: message
+    fields:
+      log_type: cdc_events
+    fields_under_root: true
+
+# Processors to enhance log data
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_docker_metadata: ~
+  - decode_json_fields:
+      fields: ["message"]
+      process_array: false
+      max_depth: 2
+      target: ""
+      overwrite_keys: true
+      add_error_key: true
+
+# Output to Elasticsearch
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "cdc-events-%{+yyyy.MM.dd}"
+  protocol: "http"
+
+# Index template settings
+setup.template.enabled: true
+setup.template.name: "cdc-events"
+setup.template.pattern: "cdc-events-*"
+setup.template.settings:
+  index.number_of_shards: 1
+  index.number_of_replicas: 0
+
+# ILM (Index Lifecycle Management)
+setup.ilm.enabled: false
+
+# Logging
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0640
