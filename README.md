@@ -67,13 +67,7 @@ A complete eco-system application featuring TiDB database with Change Data Captu
 Start the entire ecosystem with a single command:
 
 ```bash
-docker-compose up
-```
-
-Or run in detached mode:
-
-```bash
-docker-compose up -d
+docker-compose up -d 
 ```
 
 ### Verifying the Setup
@@ -171,20 +165,24 @@ CREATE TABLE order_items (
 After the system is running, you can test CDC by performing database operations:
 
 ### Insert a new user
-```sql
-USE app_db;
-INSERT INTO users (username, email, password_hash, first_name, last_name)
-VALUES ('testuser', 'test@example.com', 'hashed_password', 'Test', 'User');
+```
+  sudo docker run --rm --network helfy-home-assignment_tidb-network mysql:8.0 \
+    mysql -h tidb -P 4000 -u root -e \
+    "INSERT INTO app_db.users (username, email, password_hash, first_name, last_name) VALUES ('john', 'john@test.com', 'hash', 'John', 'Doe');"
 ```
 
 ### Update a product
-```sql
-UPDATE products SET price = 1399.99 WHERE name = 'Laptop Pro 15';
+```
+  sudo docker run --rm --network helfy-home-assignment_tidb-network mysql:8.0 \
+    mysql -h tidb -P 4000 -u root -e \
+    "UPDATE app_db.users SET first_name = 'Johnny' WHERE username = 'john';"
 ```
 
 ### Delete a record
-```sql
-DELETE FROM users WHERE username = 'testuser';
+```
+  sudo docker run --rm --network helfy-home-assignment_tidb-network mysql:8.0 \
+    mysql -h tidb -P 4000 -u root -e \
+    "DELETE FROM app_db.users WHERE username = 'john';"
 ```
 
 After each operation, you should see:
@@ -333,13 +331,3 @@ To also remove volumes (data):
 ```bash
 docker-compose down -v
 ```
-
-## Documentation
-
-For more detailed documentation, see the [docs](./docs/) folder:
-
-- **[Quick Start Guide](./docs/QUICK_START_GUIDE.md)** - Step-by-step guide to clean, start, and test
-- [Architecture Overview](./docs/ARCHITECTURE.md) - Detailed system design and data flow
-- [Setup Guide](./docs/SETUP.md) - Complete installation and configuration guide
-- [Monitoring Guide](./docs/MONITORING.md) - Using Grafana dashboards and queries
-- [Troubleshooting](./docs/TROUBLESHOOTING.md) - Common issues and solutions
